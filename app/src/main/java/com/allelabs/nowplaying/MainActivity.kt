@@ -175,8 +175,8 @@ class MainActivity : AppCompatActivity() {
             val info = packageManager.getInstallSourceInfo(packageName)
             if (Build.VERSION.SDK_INT >= 34) {
                 when (info.packageSource) {
-                    PackageInstaller.PackageSource.PACKAGE_SOURCE_STORE -> false
-                    PackageInstaller.PackageSource.PACKAGE_SOURCE_UNSPECIFIED ->
+                    PackageInstaller.PACKAGE_SOURCE_STORE -> false
+                    PackageInstaller.PACKAGE_SOURCE_UNSPECIFIED ->
                         installedByUntrusted(info.initiatingPackageName)
                     else -> true   // LOCAL_FILE / DOWNLOADED_FILE / OTHER
                 }
@@ -239,7 +239,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun addRow(parent: LinearLayout, name: String, buttonLabel: String,
-                       check: () -> Boolean, action: () -> Unit, hint: String? = null) {
+                       check: () -> Boolean, hint: String? = null, action: () -> Unit) {
         val line = text("", 13f, bold = true).apply { setPadding(0, dp(10), 0, dp(4)) }
         val btn = whiteButton(buttonLabel, action)
         parent.addView(line)
@@ -306,10 +306,12 @@ class MainActivity : AppCompatActivity() {
         val setupCard = card()
         setupCard.addView(text("PENGATURAN (SEKALI SAJA)", 11f, grey))
         addRow(setupCard, "Izin Bluetooth", "Izinkan Bluetooth", ::bluetoothOk) { requestBluetooth() }
-        addRow(setupCard, "Akses Notifikasi", "Beri akses Notifikasi", ::notificationOk, {
+        addRow(setupCard, "Akses Notifikasi", "Beri akses Notifikasi", ::notificationOk,
+            hint = "Toggle abu-abu / \"Setelan dibatasi\"? Tekan tombolnya — ada panduan lengkap + perintah ADB."
+        ) {
             // Android 13+: sideload kena "setelan dibatasi", jadi tampilkan panduan dulu
             if (Build.VERSION.SDK_INT >= 33) showNotificationHelp() else openNotificationAccess()
-        }, "Toggle abu-abu / \"Setelan dibatasi\"? Tekan tombolnya — ada panduan lengkap + perintah ADB.")
+        }
         addRow(setupCard, "Hemat baterai dimatikan", "Matikan hemat baterai", ::batteryOk) {
             startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
         }
