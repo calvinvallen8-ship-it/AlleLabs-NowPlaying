@@ -7,6 +7,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -26,3 +28,12 @@ jobs:
         with:
           name: AlleLabs-APK
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Update release "latest"
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: APK Terbaru
+          body: "APK debug terbaru dari push otomatis. Download app-debug.apk lalu install di HP."
+          files: app/build/outputs/apk/debug/app-debug.apk
+          make_latest: true
