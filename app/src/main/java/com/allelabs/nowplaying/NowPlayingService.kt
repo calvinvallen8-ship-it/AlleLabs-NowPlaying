@@ -256,6 +256,27 @@ class NowPlayingService : NotificationListenerService() {
         else main.postDelayed(pushRunnable, 400)     // GATT sibuk, coba lagi
     }
 
+    /**
+     * Susun bagian "judul\nartis" (maks MAX_BYTES-2 byte) dengan jaminan newline pemisah
+     * TIDAK PERNAH hilang saat truncation. Kalau judul kepanjangan, judul yang dipotong
+     * (bukan pemisahnya) — kalau tidak, semua field di firmware bergeser (durasi/volume/
+     * jam kebaca salah). Potongan UTF-8 selalu dibuang sisa byte-nya lewat re-encode.
+     */
+    private fun buildHead(title: String, artist: String): ByteArray {
+        val maxHead = MAX_BYTES - 2
+        var t = title.toByteArray(Charsets.UTF_8)
+        if (t.size > maxHead - 1) {                  // sisakan tempat untuk "\n" (1 byte)
+            t = String(t, 0, maxHead - 1, Charsets.UTF_8).toByteArray(Charsets.UTF_8)
+        }
+        val aMax = maxHead - t.size - 1
+        var a = artist.toByteArray(Charsets.UTF_8)
+        if (a.size > aMax) {
+            a = if (aMax > 0) String(a, 0, aMax, Charsets.UTF_8).toByteArray(Charsets.UTF_8)
+                else ByteArray(0)
+        }
+        return t + "\n".toByteArray(Charsets.UTF_8) + a
+    }
+
     private fun writeData(
         title: String, artist: String, playing: Boolean,
         durSec: Long, posSec: Long, vol: Int
@@ -264,10 +285,7 @@ class NowPlayingService : NotificationListenerService() {
         val ch = writeChar ?: return false
         if (writeInFlight) return false              // tunggu balasan write sebelumnya
 
-        var head = "$title\n$artist".toByteArray(Charsets.UTF_8)
-        if (head.size > MAX_BYTES - 2) {
-            head = String(head.copyOf(MAX_BYTES - 2), Charsets.UTF_8).toByteArray(Charsets.UTF_8)
-        }
+        val head = buildHead(title, artist)
         val now = System.currentTimeMillis()
         val tzMin = TimeZone.getDefault().getOffset(now) / 60000
         val tail = "\n${if (playing) 1 else 0}\n$durSec\n$posSec\n$vol\n${now / 1000L}\n$tzMin"
