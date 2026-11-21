@@ -1,8 +1,11 @@
 package com.allelabs.nowplaying
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
@@ -19,6 +22,7 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.NotificationManagerCompat
@@ -29,6 +33,7 @@ class MainActivity : AppCompatActivity() {
     private val mono: Typeface = Typeface.MONOSPACE
     private val monoBold: Typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
     private val grey = Color.parseColor("#AAAAAA")
+    private val adbCommand = "adb install -r app-debug.apk"
 
     private lateinit var tvConn: TextView
     private lateinit var tvHint: TextView
@@ -41,7 +46,8 @@ class MainActivity : AppCompatActivity() {
         val name: String,
         val check: () -> Boolean,
         val statusView: TextView,
-        val button: Button
+        val button: Button,
+        val hint: TextView? = null
     )
 
     private val rows = mutableListOf<SetupRow>()
@@ -126,25 +132,70 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showNotificationHelp() {
-        val steps = if (Build.VERSION.SDK_INT >= 33) {
-            "Kalau tombol Akses Notifikasi abu-abu / muncul \"Setelan dibatasi\", itu karena " +
-                "aplikasi ini di-install dari luar Play Store. Cara membukanya:\n\n" +
-                "1. Tekan \"Info Aplikasi\"\n" +
-                "2. Tekan titik tiga (⋮) di pojok kanan atas\n" +
-                "3. Pilih \"Izinkan setelan terbatas\" (Allow restricted settings), lalu konfirmasi PIN/sidik jari\n" +
-                "4. Kembali, tekan \"Akses Notifikasi\", nyalakan Alle Labs Now Playing\n\n" +
-                "Kalau menu titik tiga tidak muncul, buka Akses Notifikasi dulu, tekan toggle yang " +
-                "abu-abu sekali (muncul pesan dibatasi), lalu ulangi langkah 1-4."
-        } else {
-            "Nyalakan toggle Alle Labs Now Playing di layar Akses Notifikasi."
+        val msg = when {
+            Build.VERSION.SDK_INT < 33 ->
+                "Nyalakan toggle Alle Labs Now Playing di layar Akses Notifikasi."
+            isSideloadRestricted() -> buildString {
+                append("APK ini terdeteksi di-install dari luar Play Store (Telegram/Chrome/file ")
+                    .append("manager/dll). Android 13 s.d. 16 otomatis memblokir akses Notifikasi ")
+                    .append("untuk install seperti itu.\n\n")
+                    .append("CARA MEMBUKANYA:\n")
+                    .append("1. Tekan tombol \"Info Aplikasi\" di bawah\n")
+                    .append("2. Tekan titik tiga (⋮) di pojok kanan atas\n")
+                    .append("3. Pilih \"Izinkan setelan terbatas\" (Allow restricted settings), ")
+                    .append("lalu konfirmasi PIN/sidik jari\n")
+                    .append("4. Kembali, tekan \"Akses Notifikasi\", nyalakan Alle Labs Now Playing\n\n")
+                    .append("Kalau menu titik tiga / \"Izinkan setelan terbatas\" TIDAK ADA atau toggle ")
+                    .append("tetap abu-abu (sering terjadi di Android 15/16), install ulang APK lewat PC ")
+                    .append("dengan ADB. Install lewat ADB tidak kena blokir, jadi toggle langsung bisa ")
+                    .append("dinyalakan:\n")
+                    .append(adbCommand)
+                    .append("\n(HP disambung USB ke PC + \"USB debugging\" diaktifkan di menu Opsi Pengembang)")
+            }
+            else -> buildString {
+                append("Buka layar Akses Notifikasi dan nyalakan Alle Labs Now Playing.\n\n")
+                    .append("Kalau toggle abu-abu / muncul \"Setelan dibatasi\": tekan \"Info Aplikasi\", ")
+                    .append("tekan titik tiga (⋮) di pojok kanan atas, pilih \"Izinkan setelan terbatas\", ")
+                    .append("lalu ulangi.")
+            }
         }
         AlertDialog.Builder(this)
             .setTitle("Beri akses Notifikasi")
-            .setMessage(steps)
+            .setMessage(msg)
             .setPositiveButton("Info Aplikasi") { _, _ -> openAppInfo() }
             .setNeutralButton("Akses Notifikasi") { _, _ -> openNotificationAccess() }
-            .setNegativeButton("Tutup", null)
+            .setNegativeButton("Salin perintah ADB") { _, _ -> copyAdbCommand() }
             .show()
+    }
+
+    /** True kalau aplikasi terpasang dari sumber yang kena "setelan terbatas" (sideload). */
+    private fun isSideloadRestricted(): Boolean {
+        if (Build.VERSION.SDK_INT < 33) return false
+        return try {
+            val info = packageManager.getInstallSourceInfo(packageName)
+            if (Build.VERSION.SDK_INT >= 34) {
+                when (info.packageSource) {
+                    PackageInstaller.PackageSource.PACKAGE_SOURCE_STORE -> false
+                    PackageInstaller.PackageSource.PACKAGE_SOURCE_UNSPECIFIED ->
+                        installedByUntrusted(info.initiatingPackageName)
+                    else -> true   // LOCAL_FILE / DOWNLOADED_FILE / OTHER
+                }
+            } else {
+                installedByUntrusted(info.initiatingPackageName)
+            }
+        } catch (_: Exception) { false }
+    }
+
+    /** ADB (com.android.shell) dan Play Store dikecualikan dari blokir; sisanya tidak. */
+    private fun installedByUntrusted(initiator: String?): Boolean =
+        initiator != null && initiator != "com.android.shell" && initiator != "com.android.vending"
+
+    private fun copyAdbCommand() {
+        try {
+            val cm = getSystemService(ClipboardManager::class.java)
+            cm?.setPrimaryClip(ClipData.newPlainText("adb", adbCommand))
+            Toast.makeText(this, "Perintah disalin: $adbCommand", Toast.LENGTH_LONG).show()
+        } catch (_: Exception) {}
     }
 
     // ---------------- Helper tampilan ----------------
@@ -188,12 +239,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun addRow(parent: LinearLayout, name: String, buttonLabel: String,
-                       check: () -> Boolean, action: () -> Unit) {
+                       check: () -> Boolean, action: () -> Unit, hint: String? = null) {
         val line = text("", 13f, bold = true).apply { setPadding(0, dp(10), 0, dp(4)) }
         val btn = whiteButton(buttonLabel, action)
         parent.addView(line)
         parent.addView(btn)
-        rows.add(SetupRow(name, check, line, btn))
+        var hintView: TextView? = null
+        if (hint != null) {
+            hintView = text(hint, 11f, grey).apply {
+                setPadding(0, dp(4), 0, 0)
+                visibility = View.GONE
+            }
+            parent.addView(hintView)
+        }
+        rows.add(SetupRow(name, check, line, btn, hintView))
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -247,10 +306,10 @@ class MainActivity : AppCompatActivity() {
         val setupCard = card()
         setupCard.addView(text("PENGATURAN (SEKALI SAJA)", 11f, grey))
         addRow(setupCard, "Izin Bluetooth", "Izinkan Bluetooth", ::bluetoothOk) { requestBluetooth() }
-        addRow(setupCard, "Akses Notifikasi", "Beri akses Notifikasi", ::notificationOk) {
+        addRow(setupCard, "Akses Notifikasi", "Beri akses Notifikasi", ::notificationOk, {
             // Android 13+: sideload kena "setelan dibatasi", jadi tampilkan panduan dulu
             if (Build.VERSION.SDK_INT >= 33) showNotificationHelp() else openNotificationAccess()
-        }
+        }, "Toggle abu-abu / \"Setelan dibatasi\"? Tekan tombolnya — ada panduan lengkap + perintah ADB.")
         addRow(setupCard, "Hemat baterai dimatikan", "Matikan hemat baterai", ::batteryOk) {
             startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
         }
@@ -333,6 +392,7 @@ class MainActivity : AppCompatActivity() {
             r.statusView.text = (if (ok) "✓ " else "✗ ") + r.name
             r.statusView.setTextColor(if (ok) Color.WHITE else grey)
             r.button.visibility = if (ok) View.GONE else View.VISIBLE
+            r.hint?.visibility = if (ok) View.GONE else View.VISIBLE
         }
     }
 }
